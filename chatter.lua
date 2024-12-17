@@ -8,129 +8,69 @@ _addon.commands = {'chat', 'ch'}
 
 require('logger')
 local packets = require('packets')
-local weaponskills = require('resources').weapon_skills
 
-local cmd = windower.send_command
-local say = windower.chat.input
+-- Message IDs
+local message_ids = {
+    melee_miss = 15, -- Message ID for a melee miss
+    skillup = 38     -- Message ID for a skill up
+}
 
-local drama = {}
-local fudo = {}
-local bursts = {}
-
-local statues = T{'Corporal Tombstone','Lithicthrower Image', 'Incarnation Icon', 'Impish Statue','Overseer\'s Tombstone','Mu\'Sha Effigy','Envincing Idol','Impish Golem'}
-local ordinal = {'>>> First','Second','Third',}
-
-function log(...) windower.add_to_chat(207,...) end
-
-function get_actor(id)
-    local actor = windower.ffxi.get_mob_by_id(id)
-    if not actor.in_alliance and not actor.in_party then
-        return false
-    else
-        return actor
-    end
+-- Custom message placeholders
+local function get_custom_miss_message()
+    -- Customize this message for when YOU miss a melee hit
+    return 'Oops! You missed your target!'
 end
 
-windower.register_event('level up','level down',function(name)
+local function get_custom_skillup_message(skill_level)
+    -- Customize this message for when YOU get a skillup
+    return 'Great job! Your skill level has increased to ' .. skill_level .. '!'
+end
+
+-- Track misses and skillups
+local fudo = {}  -- Track Fudo misses for the player
+
+windower.register_event('action', function(act)
     local player = windower.ffxi.get_player()
-    local name = name or player.name
-    
-	say'/p
-   
-    log('dramagen: Drama Generator 6.6.6.' .. _addon.subversion)
-    log('dramagen: Use at your own risk.')
-    log('dramagen: command: //drama')
-end)
-windower.register_event('action',function(act)
-    
-    if act.category == 4 and act.targets[1].actions[1].message == 252 then
-        local actor = get_actor(act.actor_id)
-        if actor then 
-            bursts[actor.name] = (bursts[actor.name] or 0) +1
-        end
-        return
-    elseif act.category ~= 3 then
-        return
-    end
-    
-    local actor = get_actor(act.actor_id)
-    if not actor then
-        return
-    end
+    if not player then return end
 
-    local data = {}
-    data.actor = actor.id
-    data.actor_name = actor.name or 'Unknown'
-    data.target = act.targets[1].id
-    data.target_name = windower.ffxi.get_mob_by_id(data.target).name or 'Unknown'
-    data.damage = act.targets[1].actions[1].param
-    data.ws = weaponskills[act.param].english
-    
-    if data.ws == 'Leaden Salute' and statues:contains(data.target_name) then
-        log('Leaden Salute on Divergence Statues do not count.')
-        return
-    end
-    
-    if data.ws == 'Tachi: Fudo' and act.targets[1].actions[1].message == 188 then
-        local misses = fudo[data.actor_name] or 0
-        fudo[data.actor_name] = misses+1
-        say:schedule(math.random(1,3),'/p %s whiffs Fudo...%s':format(data.actor_name,misses > 0 and ' again...' or ''))        
-        return
-    end
-    
-    for i=1,math.max(#drama,3) do
-        local t = drama[i]
-        if not t or data.damage > t.damage then
-            if tonumber(i) == 1 then
-                say:schedule(math.random(2,5),'/p New best! %s takes the lead with %s damage on %s!':format(data.actor_name,data.damage,data.target_name))
+    -- Process actions where the player is the actor
+    if act.actor_id == player.id then
+        for _, target in pairs(act.targets) do
+            for _, action in pairs(target.actions) do
+                -- Check for skillup message
+                if action.message == message_ids.skillup then
+                    local skill_level = action.param  -- New skill level
+                    local message = get_custom_skillup_message(skill_level)
+                    windower.chat.input('/p ' .. message)  -- Send to party chat
+                end
+
+                -- Check for melee miss message
+                if action.message == message_ids.melee_miss then
+                    local message = get_custom_miss_message()
+                    windower.chat.input('/p ' .. message)  -- Send to party chat
+                end
+
+                -- Specific handling for Tachi: Fudo misses
+                if action.message == 188 and act.param == 79 then  -- Tachi: Fudo Miss
+                    local misses = fudo[player.name] or 0
+                    fudo[player.name] = misses + 1
+                    windower.chat.input('/p %s whiffs Fudo...%s':format(player.name, misses > 0 and ' again' or ''))  -- Send Fudo miss message
+                end
             end
-            table.insert(drama, i, data)
-            break
         end
-    end
-
-    if #drama > 3 then 
-        drama = {drama[1],drama[2],drama[3]}
     end
 end)
 
-windower.register_event('addon command',function(arg)
+-- Command to reset or check the data
+windower.register_event('addon command', function(arg)
     if arg == 'r' then
-        cmd('lua r dramagen')
+        windower.send_command('lua r <addon_name>')  -- Reset command, replace <addon_name> with the actual addon name
         return
     end
-    for i=#drama,1,-1 do
-        local t = drama[i]
-        if t.damage > 0 then
-            say('/p %s place: %s with a %s %s on %s':format(ordinal[i],t.actor_name,t.damage,t.ws,t.target_name))
-            coroutine.sleep(2+math.random(0.5,2))
-        end
-    end   
-    
-    local whiffs = 0
-    local player = ''
-    for i,v in pairs(fudo) do
-        if v > whiffs then
-            whiffs = v
-            player = i
-        end
-    end
+
+    -- Display Fudo misses
+    local whiffs = fudo[player.name] or 0
     if whiffs > 0 then
-        say('/p Oh, and %s missed his Fudos %s times in total.':format(player,whiffs))
-        coroutine.sleep(2+math.random(0.5,2))
-    end
-    
-    local boom = 0
-    local player = ''
-    for i,v in pairs(bursts) do
-        if v > boom then
-            boom = v
-            player = i
-        end
-    end
-    if boom == 1 then
-        say('/p Honorable mention for %s and his single magic burst. There was an attempt.':format(player,boom))
-    elseif boom > 1 then
-        say('/p Honorable mention for %s and his %s magic bursts - not that anybody cares.':format(player,boom))
+        windower.chat.input('/p Oh, and %s missed Fudo %s times in total.':format(player.name, whiffs))
     end
 end)
